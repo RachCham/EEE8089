@@ -6,9 +6,10 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <time.h>
-#include <poll.h>  // Added for the poll function
+#include <poll.h>
 
 // Global Variables
+#define FILE_PATH "/sys/class/gpio/gpio9/value"
 int frequency_count = 0;
 pthread_mutex_t freq_mutex;
 
@@ -50,38 +51,51 @@ void graceful_exit(int sig) {
 }
 
 void *thread1_func(void *arg) {
-    int file_descriptor = open("/sys/class/gpio/gpio9/value", O_RDONLY | O_NONBLOCK);
-    if (file_descriptor == -1) {
-        perror("Error opening gpio9 value");
-        return NULL;
+    int file_descriptor;
+    char buffer[2];
+    char last_value = '0';
+    struct pollfd fds;
+
+    file_descriptor = open(FILE_PATH, O_RDONLY | O_NONBLOCK);
+    if (file_descriptor < 0) {
+        perror("Failed to open file");
+        exit(1);
     }
 
-    char buffer[2] = {0};
-
-
-    struct pollfd fds;
     fds.fd = file_descriptor;
     fds.events = POLLPRI;
 
-     while (1) {
+    // Initial read to get current value
+    read(file_descriptor, buffer, sizeof(buffer) - 1);
+    last_value = buffer[0];
+
+    while (1) {
         lseek(file_descriptor, 0, SEEK_SET);
-        read(file_descriptor, buffer, sizeof(buffer));
-       // poll(&fds, 1, -1);
-      //  if(poll(&fds, 1, 1000)==1){
-      //  lseek(file_descriptor, 0, SEEK_SET);
-       // read(file_descriptor, buffer, sizeof(buffer));
-        if (poll(&fds, 1, 1000)&&buffer[0] == '1') {
-            pthread_mutex_lock(&freq_mutex);
-            frequency_count++;
-            pthread_mutex_unlock(&freq_mutex);
+        read(file_descriptor, buffer, sizeof(buffer) - 1);
+
+        int poll_ret = poll(&fds, 1, 1000);
+
+        if (poll_ret > 0) {
+            if (fds.revents & POLLPRI) {
+                lseek(file_descriptor, 0, SEEK_SET);
+                read(file_descriptor, buffer, sizeof(buffer) - 1);
+
+                if (buffer[0] == '1' && last_value == '0') {
+                    pthread_mutex_lock(&freq_mutex);
+                    frequency_count++;
+                    pthread_mutex_unlock(&freq_mutex);
+                }
+
+                last_value = buffer[0]; // Update the last value
+            }
+        } else if (poll_ret < 0) {
+            perror("Poll error");
         }
     }
-
 
     close(file_descriptor);
     return NULL;
 }
-
 
 void *thread2_func(void *arg) {
     FILE *data_file = fopen("pid_response.txt", "w"); // Open a file to overwrite the PID response data
@@ -137,13 +151,18 @@ int main() {
     printf("Enter the desired frequency (setpoint) in Hz: ");
     scanf("%lf", &setpoint);
 
-    // Set signal handlers for multiple signals to ensure we gracefully exit
-    signal(SIGINT, graceful_exit);    // Interrupt from keyboard (Ctrl+C)
-    signal(SIGTERM, graceful_exit);   // Termination signal
-    signal(SIGQUIT, graceful_exit);   // Quit from keyboard
+    signal(SIGINT, graceful_exit);
 
-    pthread_create(&thread1, NULL, thread1_func, NULL);
-    pthread_create(&thread2, NULL, thread2_func, NULL);
+    // Create the threads
+    if (pthread_create(&thread1, NULL, thread1_func, NULL) != 0) {
+        perror("Failed to create thread 1");
+        exit(1);
+    }
+
+    if (pthread_create(&thread2, NULL, thread2_func, NULL) != 0) {
+        perror("Failed to create thread 2");
+        exit(1);
+    }
 
     pthread_join(thread1, NULL);
     pthread_join(thread2, NULL);

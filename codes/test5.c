@@ -25,11 +25,13 @@ void *thread1_func(void *arg) {
 
     fds.fd = gpio_fd;
     fds.events = POLLPRI;
+    lseek(gpio_fd, 0, SEEK_SET);
+    read(gpio_fd, buf, sizeof(buf));
 
     while (1) {
         lseek(gpio_fd, 0, SEEK_SET);
         read(gpio_fd, buf, sizeof(buf));
-       // poll(&fds, 1, -1);
+        poll(&fds, 1, -1);
 
         if (poll(&fds, 1, 1000)&&buf[0] == '1') {
             pthread_mutex_lock(&freq_mutex);

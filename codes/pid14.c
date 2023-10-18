@@ -57,26 +57,35 @@ void *thread1_func(void *arg) {
     }
 
     char buffer[2] = {0};
-
+    char last_value = '0';
 
     struct pollfd fds;
     fds.fd = file_descriptor;
-    fds.events = POLLPRI;
+    fds.events = POLLPRI | POLLERR;
 
-     while (1) {
+    while (1) {
         lseek(file_descriptor, 0, SEEK_SET);
-        read(file_descriptor, buffer, sizeof(buffer));
-       // poll(&fds, 1, -1);
-      //  if(poll(&fds, 1, 1000)==1){
-      //  lseek(file_descriptor, 0, SEEK_SET);
-       // read(file_descriptor, buffer, sizeof(buffer));
-        if (poll(&fds, 1, 1000)&&buffer[0] == '1') {
-            pthread_mutex_lock(&freq_mutex);
-            frequency_count++;
-            pthread_mutex_unlock(&freq_mutex);
+        read(file_descriptor, buffer, sizeof(buffer) - 1);
+
+        int poll_ret = poll(&fds, 1, 1000);
+
+        if (poll_ret > 0) {
+            if (fds.revents & POLLPRI) {
+                lseek(file_descriptor, 0, SEEK_SET);
+                read(file_descriptor, buffer, sizeof(buffer) - 1);
+
+                if (buffer[0] == '1' && last_value == '0') {
+                    pthread_mutex_lock(&freq_mutex);
+                    frequency_count++;
+                    pthread_mutex_unlock(&freq_mutex);
+                }
+
+                last_value = buffer[0]; // Update the last value
+            }
+        } else if (poll_ret < 0) {
+            perror("Poll error");
         }
     }
-
 
     close(file_descriptor);
     return NULL;

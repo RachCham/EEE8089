@@ -1,3 +1,5 @@
+// frequency_output.c
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -6,9 +8,8 @@
 #include <poll.h>
 
 #define FILE_PATH "/sys/class/gpio/gpio9/value"
-#define SAMPLE_COUNT 20
 
-// 全局变量
+// Global Variables
 int frequency_count = 0;
 pthread_mutex_t freq_mutex;
 
@@ -17,7 +18,7 @@ void *thread1_func(void *arg) {
     char buf[2];
     struct pollfd fds;
 
-    gpio_fd = open(FILE_PATH, O_RDONLY);
+    gpio_fd = open(FILE_PATH, O_RDONLY | O_NONBLOCK);
     if (gpio_fd < 0) {
         perror("Failed to open file");
         exit(1);
@@ -26,12 +27,16 @@ void *thread1_func(void *arg) {
     fds.fd = gpio_fd;
     fds.events = POLLPRI;
 
+  //  lseek(gpio_fd, 0, SEEK_SET);
+//    read(gpio_fd, buf, sizeof(buf));
+
     while (1) {
+        poll(&fds, 1, -1);
         lseek(gpio_fd, 0, SEEK_SET);
         read(gpio_fd, buf, sizeof(buf));
-       // poll(&fds, 1, -1);
 
-        if (poll(&fds, 1, 1000)&&buf[0] == '1') {
+
+        if (buf[0] == '1') {
             pthread_mutex_lock(&freq_mutex);
             frequency_count++;
             pthread_mutex_unlock(&freq_mutex);
@@ -43,31 +48,24 @@ void *thread1_func(void *arg) {
 }
 
 void *thread2_func(void *arg) {
-    double frequency_samples[SAMPLE_COUNT];
-    int index = 0;
-
     while (1) {
-        usleep(20000);  
+        usleep(20000);  // Sleep for 20ms
 
-        int current_frequency;
         pthread_mutex_lock(&freq_mutex);
-        current_frequency = frequency_count;
+        int current_frequency = frequency_count;
         frequency_count = 0;
         pthread_mutex_unlock(&freq_mutex);
 
-        double freq = (current_frequency * 50) / 500;
-        frequency_samples[index] = freq;
+        double actual_frequency = (current_frequency / 500.0) / 0.02;
 
-        index++;
-        if (index == SAMPLE_COUNT) {
-            double sum = 0;
-            for (int i = 0; i < SAMPLE_COUNT; i++) {
-                sum += frequency_samples[i];
-            }
-            double average_frequency = sum / SAMPLE_COUNT;
-            printf("Average Frequency of last %d samples: %.2f Hz\n", SAMPLE_COUNT, average_frequency);
-            index = 0;
+        // Write to file
+        FILE *file = fopen("frequency.txt", "w");
+        if (!file) {
+            perror("Failed to open frequency.txt");
+            exit(1);
         }
+        fprintf(file, "%.2f", actual_frequency);
+        fclose(file);
     }
 
     return NULL;

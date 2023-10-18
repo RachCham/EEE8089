@@ -13,32 +13,49 @@ int frequency_count = 0;
 pthread_mutex_t freq_mutex;
 
 void *thread1_func(void *arg) {
-    int gpio_fd;
-    char buf[2];
+    int file_descriptor;
+    char buffer[2];
+    char last_value = '0';
     struct pollfd fds;
 
-    gpio_fd = open(FILE_PATH, O_RDONLY);
-    if (gpio_fd < 0) {
+    file_descriptor = open(FILE_PATH, O_RDONLY | O_NONBLOCK);
+    if (file_descriptor < 0) {
         perror("Failed to open file");
         exit(1);
     }
 
-    fds.fd = gpio_fd;
+    fds.fd = file_descriptor;
     fds.events = POLLPRI;
 
-    while (1) {
-        lseek(gpio_fd, 0, SEEK_SET);
-        read(gpio_fd, buf, sizeof(buf));
-       // poll(&fds, 1, -1);
+    // Initial read to get current value
+    read(file_descriptor, buffer, sizeof(buffer) - 1);
+    last_value = buffer[0];
 
-        if (poll(&fds, 1, 1000)&&buf[0] == '1') {
-            pthread_mutex_lock(&freq_mutex);
-            frequency_count++;
-            pthread_mutex_unlock(&freq_mutex);
+    while (1) {
+        lseek(file_descriptor, 0, SEEK_SET);
+        read(file_descriptor, buffer, sizeof(buffer) - 1);
+
+        int poll_ret = poll(&fds, 1, 1000);
+
+        if (poll_ret > 0) {
+            if (fds.revents & POLLPRI) {
+                lseek(file_descriptor, 0, SEEK_SET);
+                read(file_descriptor, buffer, sizeof(buffer) - 1);
+
+                if (buffer[0] == '1' && last_value == '0') {
+                    pthread_mutex_lock(&freq_mutex);
+                    frequency_count++;
+                    pthread_mutex_unlock(&freq_mutex);
+                }
+
+                last_value = buffer[0]; // Update the last value
+            }
+        } else if (poll_ret < 0) {
+            perror("Poll error");
         }
     }
 
-    close(gpio_fd);
+    close(file_descriptor);
     return NULL;
 }
 
@@ -55,7 +72,7 @@ void *thread2_func(void *arg) {
         frequency_count = 0;
         pthread_mutex_unlock(&freq_mutex);
 
-        double freq = (current_frequency * 50) / 500;
+        double freq = (current_frequency * 50.0) / 500.0;
         frequency_samples[index] = freq;
 
         index++;
